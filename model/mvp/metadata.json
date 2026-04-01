@@ -1,0 +1,21 @@
+{
+  "model_type": "CountVectorizer + LogisticRegression",
+  "text_fields": [
+    "title",
+    "company_profile",
+    "description",
+    "requirements",
+    "benefits"
+  ],
+  "target_col": "fraudulent",
+  "preprocess": [
+    "lowercase",
+    "remove_links",
+    "remove_html",
+    "remove_punctuation",
+    "remove_digits_words",
+    "regexp_tokenize",
+    "remove_english_stopwords",
+    "join_tokens_with_space"
+  ]
+}
