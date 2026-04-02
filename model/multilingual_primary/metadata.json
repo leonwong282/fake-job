@@ -1,0 +1,25 @@
+{
+  "hf_model_name": "bert-base-multilingual-cased",
+  "model_type": "Multilingual Transformer CLS Embedding + LogisticRegression",
+  "text_fields": [
+    "title",
+    "company_profile",
+    "description",
+    "requirements",
+    "benefits"
+  ],
+  "max_len": 128,
+  "threshold": 0.5,
+  "selection_metric": "fraud_class_f1_then_roc_auc_tiebreak_mbert",
+  "training_source": "kaggle_multilingual_export.py",
+  "preprocess_mode": "raw_multilingual_text",
+  "batch_size": 16,
+  "candidate_models": [
+    "bert-base-multilingual-cased",
+    "xlm-roberta-base"
+  ],
+  "random_seed": 42,
+  "use_sample": true,
+  "sample_size": 2000,
+  "full_training_rows": 17880
+}

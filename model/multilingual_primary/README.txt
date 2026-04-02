@@ -1,9 +1,10 @@
-This directory is reserved for the Kaggle-exported multilingual primary model bundle.
+This directory contains the Kaggle-exported multilingual primary model bundle.
 
-Expected files:
-- classifier.joblib
-- metadata.json
-- cv_results.csv
-- README.txt
+Selected Hugging Face backbone: bert-base-multilingual-cased
+Selection rule: highest fraud-class F1, then ROC-AUC, then prefer bert-base-multilingual-cased.
 
-The web app will keep using the lexical baseline until the Kaggle export is copied here.
+Files:
+- classifier.joblib: LogisticRegression head trained on transformer CLS embeddings
+- metadata.json: runtime metadata consumed by the local Streamlit app
+- cv_results.csv: candidate model comparison results
+- README.txt: export summary

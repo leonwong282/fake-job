@@ -35,7 +35,7 @@ streamlit run app.py
 
 ## Kaggle Export Runbook
 
-1. Open `fake-job-post-prediction-countvec-glove-bert.ipynb` in Kaggle.
+1. Open `fake-job-export.ipynb` in Kaggle.
 2. Run the multilingual export section at the end of the notebook.
 3. That section compares only:
    - `bert-base-multilingual-cased`
@@ -44,7 +44,7 @@ streamlit run app.py
    - highest mean fraud-class F1
    - tie-break by mean ROC-AUC
    - final tie-break prefers `bert-base-multilingual-cased`
-5. The notebook exports the winning classifier head to `model/multilingual_primary/`.
+5. The notebook exports the winning classifier head and metadata bundle to `model/multilingual_primary/`.
 6. Download that directory from Kaggle and place it into this repo at `model/multilingual_primary/`.
 
 The exported `metadata.json` is expected to contain:
