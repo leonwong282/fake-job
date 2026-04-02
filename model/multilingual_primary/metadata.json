@@ -19,7 +19,7 @@
     "xlm-roberta-base"
   ],
   "random_seed": 42,
-  "use_sample": true,
-  "sample_size": 2000,
+  "use_sample": false,
+  "sample_size": null,
   "full_training_rows": 17880
 }

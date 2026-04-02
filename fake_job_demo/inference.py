@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import re
+import shutil
 import string
+import subprocess
+import sys
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
@@ -28,12 +32,37 @@ FIELD_LABELS = {
     "benefits": "Benefits",
 }
 
-BASELINE_MODEL_ID = "baseline_lexical"
-PRIMARY_MODEL_ID = "primary_multilingual"
+COUNT_LR_MODEL_ID = "count_lr"
+TFIDF_LR_MODEL_ID = "tfidf_lr"
+DISTILBERT_LR_MODEL_ID = "distilbert_lr"
+MULTILINGUAL_PRIMARY_MODEL_ID = "multilingual_primary"
+DEFAULT_SELECTED_MODEL_ID = TFIDF_LR_MODEL_ID
 
-DEFAULT_ARTIFACT_DIR = Path(__file__).resolve().parent.parent / "model" / "mvp"
-DEFAULT_MULTILINGUAL_ARTIFACT_DIR = (
-    Path(__file__).resolve().parent.parent / "model" / "multilingual_primary"
+BASELINE_MODEL_ID = COUNT_LR_MODEL_ID
+PRIMARY_MODEL_ID = DISTILBERT_LR_MODEL_ID
+
+REPO_ROOT = Path(__file__).resolve().parent.parent
+MODEL_ROOT = REPO_ROOT / "model"
+COUNT_LR_ARTIFACT_DIR = MODEL_ROOT / COUNT_LR_MODEL_ID
+TFIDF_LR_ARTIFACT_DIR = MODEL_ROOT / TFIDF_LR_MODEL_ID
+DISTILBERT_LR_ARTIFACT_DIR = MODEL_ROOT / DISTILBERT_LR_MODEL_ID
+MULTILINGUAL_PRIMARY_ARTIFACT_DIR = MODEL_ROOT / MULTILINGUAL_PRIMARY_MODEL_ID
+
+DEFAULT_ARTIFACT_DIR = MODEL_ROOT / "mvp"
+DEFAULT_MULTILINGUAL_ARTIFACT_DIR = MODEL_ROOT / "multilingual_primary"
+
+MODEL_FAMILY_LEXICAL = "lexical"
+MODEL_FAMILY_TRANSFORMER = "transformer_embedding"
+MODEL_FAMILY_MULTILINGUAL = "multilingual_transformer"
+
+TRANSFORMER_INPUT_PROCESSED_ENGLISH = "processed_english_text"
+TRANSFORMER_INPUT_RAW_MULTILINGUAL = "raw_multilingual_text"
+
+SUPPORTED_MULTILINGUAL_MODEL_NAMES = frozenset(
+    {
+        "bert-base-multilingual-cased",
+        "xlm-roberta-base",
+    }
 )
 
 
@@ -41,7 +70,8 @@ DEFAULT_MULTILINGUAL_ARTIFACT_DIR = (
 class TermContribution:
     term: str
     weight: float
-    count: int
+    feature_value: float
+    feature_kind: str
     contribution: float
     direction: str
 
@@ -75,13 +105,45 @@ class ArtifactBundle:
 
 
 @dataclass(frozen=True)
-class MultilingualArtifactBundle:
+class TransformerEmbeddingBundle:
     artifact_dir: Path
     classifier: Any
     metadata: dict[str, Any]
-    hf_model_name: str
+    model_name: str
     max_len: int
     threshold: float
+    input_mode: str
+
+
+@dataclass(frozen=True)
+class DemoModelSpec:
+    model_id: str
+    display_label: str
+    family: str
+    artifact_dir: Path
+    default_selectable: bool = False
+
+
+@dataclass(frozen=True)
+class DemoModelState:
+    spec: DemoModelSpec
+    bundle: ArtifactBundle | TransformerEmbeddingBundle | None
+    error_message: str
+
+    @property
+    def is_loaded(self) -> bool:
+        return self.bundle is not None
+
+
+@dataclass(frozen=True)
+class ModelRunResult:
+    model_id: str
+    display_label: str
+    family: str
+    model_type: str
+    status: str
+    prediction: PredictionResult | None
+    error_message: str = ""
 
 
 @dataclass(frozen=True)
@@ -92,28 +154,35 @@ class TransformerBackbone:
     device: str
 
 
-@dataclass(frozen=True)
-class ModelBundleState:
-    baseline_bundle: ArtifactBundle | None
-    baseline_error: str
-    multilingual_bundle: MultilingualArtifactBundle | None
-    multilingual_error: str
+DEMO_MODEL_SPECS: tuple[DemoModelSpec, ...] = (
+    DemoModelSpec(
+        model_id=COUNT_LR_MODEL_ID,
+        display_label="Count LR",
+        family=MODEL_FAMILY_LEXICAL,
+        artifact_dir=COUNT_LR_ARTIFACT_DIR,
+    ),
+    DemoModelSpec(
+        model_id=TFIDF_LR_MODEL_ID,
+        display_label="TF-IDF LR",
+        family=MODEL_FAMILY_LEXICAL,
+        artifact_dir=TFIDF_LR_ARTIFACT_DIR,
+        default_selectable=True,
+    ),
+    DemoModelSpec(
+        model_id=DISTILBERT_LR_MODEL_ID,
+        display_label="DistilBERT LR",
+        family=MODEL_FAMILY_TRANSFORMER,
+        artifact_dir=DISTILBERT_LR_ARTIFACT_DIR,
+    ),
+    DemoModelSpec(
+        model_id=MULTILINGUAL_PRIMARY_MODEL_ID,
+        display_label="Multilingual Primary",
+        family=MODEL_FAMILY_MULTILINGUAL,
+        artifact_dir=MULTILINGUAL_PRIMARY_ARTIFACT_DIR,
+    ),
+)
 
-
-@dataclass(frozen=True)
-class DemoPredictionResult:
-    active_model_id: str
-    baseline_result: PredictionResult | None
-    primary_result: PredictionResult | None
-    fallback_reason: str
-
-    @property
-    def active_result(self) -> PredictionResult | None:
-        if self.active_model_id == PRIMARY_MODEL_ID:
-            return self.primary_result
-        if self.active_model_id == BASELINE_MODEL_ID:
-            return self.baseline_result
-        return None
+DEMO_MODEL_SPEC_BY_ID = {spec.model_id: spec for spec in DEMO_MODEL_SPECS}
 
 
 def build_raw_text_from_fields(**job_post: str) -> str:
@@ -122,13 +191,8 @@ def build_raw_text_from_fields(**job_post: str) -> str:
 
 
 def build_multilingual_text_from_fields(**job_post: str) -> str:
-    sections = []
-    for field in MODEL_TEXT_FIELDS:
-        value = str(job_post.get(field, "")).strip()
-        if not value:
-            continue
-        sections.append(f"{FIELD_LABELS[field]}: {value}")
-    return "\n".join(sections)
+    parts = [str(job_post.get(field, "")).strip() for field in MODEL_TEXT_FIELDS]
+    return re.sub(r"\s+", " ", " ".join(part for part in parts if part)).strip()
 
 
 def preprocess_text(raw_text: str) -> str:
@@ -144,26 +208,53 @@ def preprocess_text(raw_text: str) -> str:
     return " ".join(filtered)
 
 
-@lru_cache(maxsize=4)
+def list_demo_models() -> tuple[DemoModelSpec, ...]:
+    return DEMO_MODEL_SPECS
+
+
+def get_demo_model_spec(model_id: str) -> DemoModelSpec:
+    try:
+        return DEMO_MODEL_SPEC_BY_ID[model_id]
+    except KeyError as exc:
+        known = ", ".join(DEMO_MODEL_SPEC_BY_ID)
+        raise KeyError(f"Unknown model id: {model_id}. Expected one of: {known}") from exc
+
+
+def _read_metadata(metadata_path: Path) -> dict[str, Any]:
+    return json.loads(metadata_path.read_text(encoding="utf-8"))
+
+
+def _pick_existing_path(artifact_path: Path, candidates: Sequence[str], label: str) -> Path:
+    for candidate in candidates:
+        path = artifact_path / candidate
+        if path.exists():
+            return path
+    raise FileNotFoundError(
+        f"Missing {label} in {artifact_path}. Expected one of: {', '.join(candidates)}"
+    )
+
+
+@lru_cache(maxsize=8)
 def load_artifacts(artifact_dir: str | Path = DEFAULT_ARTIFACT_DIR) -> ArtifactBundle:
     artifact_path = Path(artifact_dir)
-    vectorizer_path = artifact_path / "count_vectorizer.joblib"
-    model_path = artifact_path / "logreg_model.joblib"
     metadata_path = artifact_path / "metadata.json"
+    if not metadata_path.exists():
+        raise FileNotFoundError(f"Missing metadata.json in {artifact_path}")
 
-    missing = [
-        str(path.name)
-        for path in (vectorizer_path, model_path, metadata_path)
-        if not path.exists()
-    ]
-    if missing:
-        raise FileNotFoundError(
-            f"Missing model artifacts in {artifact_path}: {', '.join(missing)}"
-        )
+    vectorizer_path = _pick_existing_path(
+        artifact_path,
+        ("vectorizer.joblib", "count_vectorizer.joblib"),
+        "vectorizer artifact",
+    )
+    classifier_path = _pick_existing_path(
+        artifact_path,
+        ("classifier.joblib", "logreg_model.joblib"),
+        "classifier artifact",
+    )
 
     vectorizer = joblib.load(vectorizer_path)
-    model = joblib.load(model_path)
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    model = joblib.load(classifier_path)
+    metadata = _read_metadata(metadata_path)
     feature_names = tuple(vectorizer.get_feature_names_out())
 
     return ArtifactBundle(
@@ -176,26 +267,71 @@ def load_artifacts(artifact_dir: str | Path = DEFAULT_ARTIFACT_DIR) -> ArtifactB
 
 
 @lru_cache(maxsize=4)
-def load_multilingual_artifacts(
-    artifact_dir: str | Path = DEFAULT_MULTILINGUAL_ARTIFACT_DIR,
-) -> MultilingualArtifactBundle:
+def load_transformer_embedding_artifacts(
+    artifact_dir: str | Path = DISTILBERT_LR_ARTIFACT_DIR,
+) -> TransformerEmbeddingBundle:
     artifact_path = Path(artifact_dir)
-    classifier_path = artifact_path / "classifier.joblib"
     metadata_path = artifact_path / "metadata.json"
+    classifier_path = artifact_path / "classifier.joblib"
 
     missing = [
         str(path.name)
-        for path in (classifier_path, metadata_path)
+        for path in (metadata_path, classifier_path)
         if not path.exists()
     ]
     if missing:
         raise FileNotFoundError(
-            "Multilingual artifacts are unavailable in "
-            f"{artifact_path}: missing {', '.join(missing)}. "
-            "Generate them in Kaggle and place them under model/multilingual_primary."
+            f"Missing transformer embedding artifacts in {artifact_path}: {', '.join(missing)}"
         )
 
-    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    metadata = _read_metadata(metadata_path)
+    required_keys = {"encoder_type", "model_name", "max_len", "threshold", "model_type"}
+    missing_keys = sorted(required_keys - metadata.keys())
+    if missing_keys:
+        raise ValueError(
+            "Transformer embedding metadata is missing required keys: "
+            f"{', '.join(missing_keys)}"
+        )
+    if metadata["encoder_type"] != MODEL_FAMILY_TRANSFORMER:
+        raise ValueError(
+            "Unsupported encoder_type for transformer embedding bundle: "
+            f"{metadata['encoder_type']}"
+        )
+
+    classifier = joblib.load(classifier_path)
+    if not hasattr(classifier, "predict_proba"):
+        raise ValueError("Loaded transformer classifier does not implement predict_proba.")
+
+    return TransformerEmbeddingBundle(
+        artifact_dir=artifact_path,
+        classifier=classifier,
+        metadata=metadata,
+        model_name=str(metadata["model_name"]),
+        max_len=int(metadata["max_len"]),
+        threshold=float(metadata["threshold"]),
+        input_mode=TRANSFORMER_INPUT_PROCESSED_ENGLISH,
+    )
+
+
+@lru_cache(maxsize=4)
+def load_multilingual_transformer_artifacts(
+    artifact_dir: str | Path = DEFAULT_MULTILINGUAL_ARTIFACT_DIR,
+) -> TransformerEmbeddingBundle:
+    artifact_path = Path(artifact_dir)
+    metadata_path = artifact_path / "metadata.json"
+    classifier_path = artifact_path / "classifier.joblib"
+
+    missing = [
+        str(path.name)
+        for path in (metadata_path, classifier_path)
+        if not path.exists()
+    ]
+    if missing:
+        raise FileNotFoundError(
+            f"Missing multilingual artifacts in {artifact_path}: {', '.join(missing)}"
+        )
+
+    metadata = _read_metadata(metadata_path)
     required_keys = {
         "hf_model_name",
         "model_type",
@@ -213,45 +349,53 @@ def load_multilingual_artifacts(
             f"{', '.join(missing_keys)}"
         )
 
+    model_name = str(metadata["hf_model_name"]).strip()
+    if model_name not in SUPPORTED_MULTILINGUAL_MODEL_NAMES:
+        expected = ", ".join(sorted(SUPPORTED_MULTILINGUAL_MODEL_NAMES))
+        raise ValueError(
+            f"Unsupported multilingual backbone {model_name}. Expected one of: {expected}"
+        )
+
+    if str(metadata["preprocess_mode"]).strip() != TRANSFORMER_INPUT_RAW_MULTILINGUAL:
+        raise ValueError(
+            "Unsupported multilingual preprocess_mode: "
+            f"{metadata['preprocess_mode']}"
+        )
+
     classifier = joblib.load(classifier_path)
     if not hasattr(classifier, "predict_proba"):
         raise ValueError("Loaded multilingual classifier does not implement predict_proba.")
 
-    return MultilingualArtifactBundle(
+    return TransformerEmbeddingBundle(
         artifact_dir=artifact_path,
         classifier=classifier,
         metadata=metadata,
-        hf_model_name=str(metadata["hf_model_name"]),
+        model_name=model_name,
         max_len=int(metadata["max_len"]),
         threshold=float(metadata["threshold"]),
+        input_mode=TRANSFORMER_INPUT_RAW_MULTILINGUAL,
     )
 
 
-def load_model_bundle_state(
-    baseline_dir: str | Path = DEFAULT_ARTIFACT_DIR,
-    multilingual_dir: str | Path = DEFAULT_MULTILINGUAL_ARTIFACT_DIR,
-) -> ModelBundleState:
-    baseline_bundle: ArtifactBundle | None = None
-    multilingual_bundle: MultilingualArtifactBundle | None = None
-    baseline_error = ""
-    multilingual_error = ""
-
+@lru_cache(maxsize=8)
+def load_demo_model_state(model_id: str) -> DemoModelState:
+    spec = get_demo_model_spec(model_id)
     try:
-        baseline_bundle = load_artifacts(baseline_dir)
+        if spec.family == MODEL_FAMILY_LEXICAL:
+            bundle = load_artifacts(spec.artifact_dir)
+        elif spec.family == MODEL_FAMILY_TRANSFORMER:
+            bundle = load_transformer_embedding_artifacts(spec.artifact_dir)
+        elif spec.family == MODEL_FAMILY_MULTILINGUAL:
+            bundle = load_multilingual_transformer_artifacts(spec.artifact_dir)
+        else:
+            raise ValueError(f"Unsupported model family: {spec.family}")
+        return DemoModelState(spec=spec, bundle=bundle, error_message="")
     except Exception as exc:
-        baseline_error = str(exc)
+        return DemoModelState(spec=spec, bundle=None, error_message=str(exc))
 
-    try:
-        multilingual_bundle = load_multilingual_artifacts(multilingual_dir)
-    except Exception as exc:
-        multilingual_error = str(exc)
 
-    return ModelBundleState(
-        baseline_bundle=baseline_bundle,
-        baseline_error=baseline_error,
-        multilingual_bundle=multilingual_bundle,
-        multilingual_error=multilingual_error,
-    )
+def load_demo_model_states() -> tuple[DemoModelState, ...]:
+    return tuple(load_demo_model_state(spec.model_id) for spec in DEMO_MODEL_SPECS)
 
 
 @lru_cache(maxsize=4)
@@ -265,10 +409,38 @@ def load_transformer_backbone(model_name: str) -> TransformerBackbone:
             "Run `pip install -r requirements.txt`."
         ) from exc
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    tokenizer = AutoTokenizer.from_pretrained(model_name)
-    model = AutoModel.from_pretrained(model_name).to(device)
-    model.eval()
+    if torch.backends.mps.is_available():
+        device = "mps"
+    elif torch.cuda.is_available():
+        device = "cuda"
+    else:
+        device = "cpu"
+
+    tokenizer = None
+    model = None
+    load_errors: list[str] = []
+
+    for local_files_only in (False, True):
+        try:
+            tokenizer = AutoTokenizer.from_pretrained(
+                model_name,
+                local_files_only=local_files_only,
+            )
+            model = AutoModel.from_pretrained(
+                model_name,
+                local_files_only=local_files_only,
+            ).to(device)
+            model.eval()
+            break
+        except Exception as exc:
+            mode = "local cache only" if local_files_only else "network or cache"
+            load_errors.append(f"{mode}: {exc}")
+
+    if tokenizer is None or model is None:
+        raise RuntimeError(
+            f"Unable to load transformer backbone {model_name}. " + " | ".join(load_errors)
+        )
+
     return TransformerBackbone(
         model_name=model_name,
         tokenizer=tokenizer,
@@ -285,6 +457,9 @@ def extract_transformer_features(
     import torch
 
     backbone = load_transformer_backbone(model_name)
+    if backbone.device == "mps":
+        torch.mps.empty_cache()
+
     encoded = backbone.tokenizer(
         list(texts),
         padding=True,
@@ -294,11 +469,23 @@ def extract_transformer_features(
     )
     encoded = {key: value.to(backbone.device) for key, value in encoded.items()}
 
-    with torch.no_grad():
+    with torch.inference_mode():
         outputs = backbone.model(**encoded)
         cls_embeddings = outputs.last_hidden_state[:, 0, :]
 
-    return cls_embeddings.cpu().numpy()
+    features = cls_embeddings.detach().cpu().numpy()
+
+    if backbone.device == "mps":
+        torch.mps.empty_cache()
+
+    return features
+
+
+def _feature_kind(bundle: ArtifactBundle) -> str:
+    vectorizer_name = bundle.vectorizer.__class__.__name__.lower()
+    if "tfidf" in vectorizer_name:
+        return "tfidf"
+    return "count"
 
 
 def explain_prediction(
@@ -309,19 +496,21 @@ def explain_prediction(
 
     encoded = bundle.vectorizer.transform([processed_text]).tocoo()
     coefficients = bundle.model.coef_[0]
+    feature_kind = _feature_kind(bundle)
     items: list[TermContribution] = []
 
-    for feature_index, count in zip(encoded.col, encoded.data):
+    for feature_index, feature_value in zip(encoded.col, encoded.data):
         weight = float(coefficients[feature_index])
-        contribution = weight * int(count)
+        numeric_value = float(feature_value)
+        contribution = weight * numeric_value
         if contribution == 0:
             continue
-
         items.append(
             TermContribution(
                 term=bundle.feature_names[feature_index],
                 weight=weight,
-                count=int(count),
+                feature_value=numeric_value,
+                feature_kind=feature_kind,
                 contribution=contribution,
                 direction="fraud" if contribution > 0 else "legit",
             )
@@ -343,23 +532,44 @@ def explain_prediction(
     return positive, negative
 
 
+def _label_from_bundle(bundle: ArtifactBundle, fallback: str) -> str:
+    return str(bundle.metadata.get("model_type", fallback))
+
+
+def _normalize_raw_transformer_text(raw_text: str) -> str:
+    return re.sub(r"\s+", " ", str(raw_text)).strip()
+
+
+def _prepare_transformer_input(
+    raw_text: str,
+    input_mode: str = TRANSFORMER_INPUT_PROCESSED_ENGLISH,
+) -> tuple[str, str]:
+    if input_mode == TRANSFORMER_INPUT_RAW_MULTILINGUAL:
+        model_input_text = _normalize_raw_transformer_text(raw_text)
+        return "", model_input_text
+
+    processed_text = preprocess_text(raw_text)
+    model_input_text = processed_text or _normalize_raw_transformer_text(raw_text)
+    return processed_text, model_input_text
+
+
 def predict_raw_text(
-    raw_text: str, bundle: ArtifactBundle | None = None
+    raw_text: str,
+    bundle: ArtifactBundle | None = None,
 ) -> PredictionResult:
     artifact_bundle = bundle or load_artifacts()
     processed_text = preprocess_text(raw_text)
     encoded = artifact_bundle.vectorizer.transform([processed_text])
     probability = float(artifact_bundle.model.predict_proba(encoded)[0, 1])
-    threshold = 0.5
+    threshold = float(artifact_bundle.metadata.get("threshold", 0.5))
     label = int(probability >= threshold)
     positive, negative = explain_prediction(processed_text, artifact_bundle)
+    model_label = _label_from_bundle(artifact_bundle, "Lexical LogisticRegression")
 
     return PredictionResult(
-        model_id=BASELINE_MODEL_ID,
-        model_label="CountVectorizer + LogisticRegression",
-        model_type=str(
-            artifact_bundle.metadata.get("model_type", "CountVectorizer + LogisticRegression")
-        ),
+        model_id=str(artifact_bundle.metadata.get("model_key", artifact_bundle.artifact_dir.name)),
+        model_label=model_label,
+        model_type=model_label,
         label=label,
         risk_label=_risk_label(label),
         fraud_probability=probability,
@@ -371,12 +581,13 @@ def predict_raw_text(
         active_fields=("combined_text",),
         top_positive_terms=positive,
         top_negative_terms=negative,
-        explanation_source="baseline_lexical_terms",
+        explanation_source="lexical_terms",
     )
 
 
 def predict_job_post(
-    job_post: Mapping[str, str], bundle: ArtifactBundle | None = None
+    job_post: Mapping[str, str],
+    bundle: ArtifactBundle | None = None,
 ) -> PredictionResult:
     raw_text = build_raw_text_from_fields(**job_post)
     result = predict_raw_text(raw_text, bundle)
@@ -402,30 +613,45 @@ def predict_job_post(
     )
 
 
-def predict_multilingual_raw_text(
+def predict_transformer_raw_text(
     raw_text: str,
-    bundle: MultilingualArtifactBundle | None = None,
+    bundle: TransformerEmbeddingBundle | None = None,
+    use_subprocess: bool = True,
 ) -> PredictionResult:
-    artifact_bundle = bundle or load_multilingual_artifacts()
-    model_input_text = str(raw_text).strip()
+    if use_subprocess:
+        return _predict_transformer_raw_text_subprocess(raw_text, bundle)
+    return _predict_transformer_raw_text_local(raw_text, bundle)
+
+
+def _predict_transformer_raw_text_local(
+    raw_text: str,
+    bundle: TransformerEmbeddingBundle | None = None,
+) -> PredictionResult:
+    artifact_bundle = bundle or load_transformer_embedding_artifacts()
+    processed_text, model_input_text = _prepare_transformer_input(
+        raw_text,
+        artifact_bundle.input_mode,
+    )
     features = extract_transformer_features(
         [model_input_text],
-        model_name=artifact_bundle.hf_model_name,
+        model_name=artifact_bundle.model_name,
         max_len=artifact_bundle.max_len,
     )
     probability = float(artifact_bundle.classifier.predict_proba(features)[0, 1])
     label = int(probability >= artifact_bundle.threshold)
 
     return PredictionResult(
-        model_id=PRIMARY_MODEL_ID,
-        model_label="Multilingual Transformer + LogisticRegression",
-        model_type=str(artifact_bundle.metadata["model_type"]),
+        model_id=str(
+            artifact_bundle.metadata.get("model_key", artifact_bundle.artifact_dir.name)
+        ),
+        model_label=str(artifact_bundle.metadata.get("model_type", "Transformer Embedding")),
+        model_type=str(artifact_bundle.metadata.get("model_type", "Transformer Embedding")),
         label=label,
         risk_label=_risk_label(label),
         fraud_probability=probability,
         threshold=artifact_bundle.threshold,
         confidence_band=_confidence_band(probability),
-        processed_text="",
+        processed_text=processed_text,
         raw_text=str(raw_text),
         model_input_text=model_input_text,
         active_fields=("combined_text",),
@@ -435,12 +661,95 @@ def predict_multilingual_raw_text(
     )
 
 
-def predict_multilingual_job_post(
-    job_post: Mapping[str, str],
-    bundle: MultilingualArtifactBundle | None = None,
+def _predict_transformer_raw_text_subprocess(
+    raw_text: str,
+    bundle: TransformerEmbeddingBundle | None = None,
 ) -> PredictionResult:
-    raw_text = build_multilingual_text_from_fields(**job_post)
-    result = predict_multilingual_raw_text(raw_text, bundle)
+    artifact_bundle = bundle or load_transformer_embedding_artifacts()
+    processed_text, model_input_text = _prepare_transformer_input(
+        raw_text,
+        artifact_bundle.input_mode,
+    )
+    python_executable = resolve_transformer_python_executable()
+    command = [
+        python_executable,
+        "-c",
+        (
+            "from fake_job_demo.inference import _run_transformer_embedding_cli; "
+            "import sys; "
+            "raise SystemExit(_run_transformer_embedding_cli(sys.argv[1]))"
+        ),
+        str(artifact_bundle.artifact_dir),
+    ]
+    env = dict(os.environ)
+    env["TOKENIZERS_PARALLELISM"] = "false"
+    env.setdefault("PYTORCH_ENABLE_MPS_FALLBACK", "1")
+    completed = subprocess.run(
+        command,
+        input=model_input_text,
+        text=True,
+        capture_output=True,
+        cwd=REPO_ROOT,
+        env=env,
+        timeout=180,
+        check=False,
+    )
+
+    if completed.returncode != 0:
+        details = (completed.stderr or completed.stdout or "").strip()
+        details = details[-800:] if details else f"exit code {completed.returncode}"
+        raise RuntimeError(
+            "Transformer subprocess failed. "
+            f"Python: {python_executable}. "
+            f"Return code: {completed.returncode}. Details: {details}"
+        )
+
+    try:
+        payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            "Transformer subprocess returned invalid JSON output: "
+            f"{completed.stdout[-400:]}"
+        ) from exc
+
+    probability = float(payload["probability"])
+    label = int(probability >= artifact_bundle.threshold)
+    return PredictionResult(
+        model_id=str(
+            artifact_bundle.metadata.get("model_key", artifact_bundle.artifact_dir.name)
+        ),
+        model_label=str(artifact_bundle.metadata.get("model_type", "Transformer Embedding")),
+        model_type=str(artifact_bundle.metadata.get("model_type", "Transformer Embedding")),
+        label=label,
+        risk_label=_risk_label(label),
+        fraud_probability=probability,
+        threshold=artifact_bundle.threshold,
+        confidence_band=_confidence_band(probability),
+        processed_text=processed_text,
+        raw_text=str(raw_text),
+        model_input_text=model_input_text,
+        active_fields=("combined_text",),
+        top_positive_terms=(),
+        top_negative_terms=(),
+        explanation_source="not_available",
+    )
+
+
+def predict_transformer_job_post(
+    job_post: Mapping[str, str],
+    bundle: TransformerEmbeddingBundle | None = None,
+    use_subprocess: bool = True,
+) -> PredictionResult:
+    artifact_bundle = bundle or load_transformer_embedding_artifacts()
+    if artifact_bundle.input_mode == TRANSFORMER_INPUT_RAW_MULTILINGUAL:
+        raw_text = build_multilingual_text_from_fields(**job_post)
+    else:
+        raw_text = build_raw_text_from_fields(**job_post)
+    result = predict_transformer_raw_text(
+        raw_text,
+        artifact_bundle,
+        use_subprocess=use_subprocess,
+    )
     active_fields = tuple(
         field for field in MODEL_TEXT_FIELDS if str(job_post.get(field, "")).strip()
     )
@@ -463,102 +772,235 @@ def predict_multilingual_job_post(
     )
 
 
-def predict_demo_raw_text(
-    raw_text: str,
-    model_state: ModelBundleState | None = None,
-) -> DemoPredictionResult:
-    state = model_state or load_model_bundle_state()
-    baseline_result: PredictionResult | None = None
-    primary_result: PredictionResult | None = None
-    fallback_reason = ""
+def _predict_with_state(
+    state: DemoModelState,
+    *,
+    raw_text: str | None = None,
+    job_post: Mapping[str, str] | None = None,
+) -> ModelRunResult:
+    model_type = _state_model_type(state)
+    input_text = _build_runtime_input_preview(raw_text, job_post)
 
-    if state.baseline_bundle is not None:
-        baseline_result = predict_raw_text(raw_text, state.baseline_bundle)
-
-    if state.multilingual_bundle is not None:
-        try:
-            primary_result = predict_multilingual_raw_text(raw_text, state.multilingual_bundle)
-        except Exception as exc:
-            fallback_reason = f"Multilingual model unavailable at runtime: {exc}"
-    elif state.multilingual_error:
-        fallback_reason = state.multilingual_error
-
-    if primary_result is not None:
-        return DemoPredictionResult(
-            active_model_id=PRIMARY_MODEL_ID,
-            baseline_result=baseline_result,
-            primary_result=primary_result,
-            fallback_reason=fallback_reason,
+    if state.bundle is None:
+        return ModelRunResult(
+            model_id=state.spec.model_id,
+            display_label=state.spec.display_label,
+            family=state.spec.family,
+            model_type=model_type,
+            status="unavailable",
+            prediction=None,
+            error_message=state.error_message or "Artifacts are unavailable.",
         )
 
-    if baseline_result is not None:
-        return DemoPredictionResult(
-            active_model_id=BASELINE_MODEL_ID,
-            baseline_result=baseline_result,
-            primary_result=None,
-            fallback_reason=fallback_reason,
+    if _contains_non_latin_script(input_text) and not _supports_non_latin_input(state.spec):
+        return ModelRunResult(
+            model_id=state.spec.model_id,
+            display_label=state.spec.display_label,
+            family=state.spec.family,
+            model_type=model_type,
+            status="skipped",
+            prediction=None,
+            error_message="Skipped for non-Latin input. This model is English-only.",
         )
 
-    raise RuntimeError(
-        state.baseline_error
-        or fallback_reason
-        or "No model artifacts are available for inference."
-    )
-
-
-def predict_demo_job_post(
-    job_post: Mapping[str, str],
-    model_state: ModelBundleState | None = None,
-) -> DemoPredictionResult:
-    state = model_state or load_model_bundle_state()
-    baseline_result: PredictionResult | None = None
-    primary_result: PredictionResult | None = None
-    fallback_reason = ""
-
-    if state.baseline_bundle is not None:
-        baseline_result = predict_job_post(job_post, state.baseline_bundle)
-
-    if state.multilingual_bundle is not None:
-        try:
-            primary_result = predict_multilingual_job_post(
-                job_post,
-                state.multilingual_bundle,
+    try:
+        if state.spec.family == MODEL_FAMILY_LEXICAL:
+            bundle = state.bundle
+            assert isinstance(bundle, ArtifactBundle)
+            prediction = (
+                predict_job_post(job_post, bundle)
+                if job_post is not None
+                else predict_raw_text(raw_text or "", bundle)
             )
-        except Exception as exc:
-            fallback_reason = f"Multilingual model unavailable at runtime: {exc}"
-    elif state.multilingual_error:
-        fallback_reason = state.multilingual_error
-
-    if primary_result is not None:
-        return DemoPredictionResult(
-            active_model_id=PRIMARY_MODEL_ID,
-            baseline_result=baseline_result,
-            primary_result=primary_result,
-            fallback_reason=fallback_reason,
+        elif state.spec.family in {MODEL_FAMILY_TRANSFORMER, MODEL_FAMILY_MULTILINGUAL}:
+            bundle = state.bundle
+            assert isinstance(bundle, TransformerEmbeddingBundle)
+            prediction = (
+                predict_transformer_job_post(job_post, bundle)
+                if job_post is not None
+                else predict_transformer_raw_text(raw_text or "", bundle)
+            )
+        else:
+            raise ValueError(f"Unsupported model family: {state.spec.family}")
+        return ModelRunResult(
+            model_id=state.spec.model_id,
+            display_label=state.spec.display_label,
+            family=state.spec.family,
+            model_type=prediction.model_type,
+            status="ready",
+            prediction=prediction,
+        )
+    except Exception as exc:
+        return ModelRunResult(
+            model_id=state.spec.model_id,
+            display_label=state.spec.display_label,
+            family=state.spec.family,
+            model_type=model_type,
+            status="unavailable",
+            prediction=None,
+            error_message=str(exc),
         )
 
-    if baseline_result is not None:
-        return DemoPredictionResult(
-            active_model_id=BASELINE_MODEL_ID,
-            baseline_result=baseline_result,
-            primary_result=None,
-            fallback_reason=fallback_reason,
-        )
 
-    raise RuntimeError(
-        state.baseline_error
-        or fallback_reason
-        or "No model artifacts are available for inference."
-    )
+def run_demo_models_raw_text(
+    raw_text: str,
+    model_states: Sequence[DemoModelState] | None = None,
+) -> tuple[ModelRunResult, ...]:
+    states = tuple(model_states) if model_states is not None else load_demo_model_states()
+    return tuple(_predict_with_state(state, raw_text=raw_text) for state in states)
+
+
+def run_demo_models_job_post(
+    job_post: Mapping[str, str],
+    model_states: Sequence[DemoModelState] | None = None,
+) -> tuple[ModelRunResult, ...]:
+    states = tuple(model_states) if model_states is not None else load_demo_model_states()
+    return tuple(_predict_with_state(state, job_post=job_post) for state in states)
 
 
 def _risk_label(label: int) -> str:
-    return "Suspicious / 可疑" if label == 1 else "Likely Legit / 较像真实职位"
+    return "Suspicious" if label == 1 else "Likely Legit"
 
 
 def _confidence_band(probability: float) -> str:
     if probability >= 0.85 or probability <= 0.15:
-        return "High / 高"
+        return "High"
     if probability >= 0.65 or probability <= 0.35:
-        return "Moderate / 中"
-    return "Low / 低"
+        return "Moderate"
+    return "Low"
+
+
+def _run_transformer_embedding_cli(artifact_dir: str) -> int:
+    bundle = load_runtime_transformer_bundle(artifact_dir)
+    raw_text = sys.stdin.read()
+    _, model_input_text = _prepare_transformer_input(raw_text, bundle.input_mode)
+    if not model_input_text:
+        raise ValueError("No transformer input text was provided on stdin.")
+
+    features = extract_transformer_features(
+        [model_input_text],
+        model_name=bundle.model_name,
+        max_len=bundle.max_len,
+    )
+    probability = float(bundle.classifier.predict_proba(features)[0, 1])
+    print(json.dumps({"probability": probability}))
+    return 0
+
+
+def load_runtime_transformer_bundle(artifact_dir: str | Path) -> TransformerEmbeddingBundle:
+    artifact_path = Path(artifact_dir)
+    metadata_path = artifact_path / "metadata.json"
+    if not metadata_path.exists():
+        raise FileNotFoundError(f"Missing metadata.json in {artifact_path}")
+    metadata = _read_metadata(metadata_path)
+    if "hf_model_name" in metadata:
+        return load_multilingual_transformer_artifacts(artifact_path)
+    return load_transformer_embedding_artifacts(artifact_path)
+
+
+@lru_cache(maxsize=1)
+def resolve_transformer_python_executable() -> str:
+    override = os.environ.get("FAKE_JOB_TRANSFORMER_PYTHON", "").strip()
+    candidates = [
+        override,
+        sys.executable,
+        shutil.which("python3") or "",
+        shutil.which("python") or "",
+        "/usr/local/bin/python3",
+        "/opt/homebrew/bin/python3",
+        "/Library/Frameworks/Python.framework/Versions/3.10/bin/python3",
+    ]
+
+    seen: set[str] = set()
+    normalized_candidates: list[str] = []
+    for candidate in candidates:
+        if not candidate:
+            continue
+        resolved = str(Path(candidate).expanduser())
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        normalized_candidates.append(resolved)
+
+    probe = (
+        "import json, sys; "
+        "out={'executable': sys.executable}; "
+        "import joblib, sklearn, torch, transformers; "
+        "out['torch']=torch.__version__; "
+        "out['transformers']=transformers.__version__; "
+        "print(json.dumps(out))"
+    )
+
+    failures: list[str] = []
+    for candidate in normalized_candidates:
+        if not Path(candidate).exists():
+            failures.append(f"{candidate}: missing")
+            continue
+        completed = subprocess.run(
+            [candidate, "-c", probe],
+            text=True,
+            capture_output=True,
+            cwd=REPO_ROOT,
+            timeout=20,
+            check=False,
+        )
+        if completed.returncode == 0:
+            return candidate
+
+        details = (completed.stderr or completed.stdout or "").strip()
+        details = details[-240:] if details else f"exit code {completed.returncode}"
+        failures.append(f"{candidate}: {details}")
+
+    raise RuntimeError(
+        "No Python interpreter with transformer dependencies was found. "
+        "Set FAKE_JOB_TRANSFORMER_PYTHON to a working interpreter. "
+        "Tried: " + " | ".join(failures)
+    )
+
+
+def _state_model_type(state: DemoModelState) -> str:
+    bundle = state.bundle
+    if isinstance(bundle, ArtifactBundle):
+        return str(bundle.metadata.get("model_type", state.spec.display_label))
+    if isinstance(bundle, TransformerEmbeddingBundle):
+        return str(bundle.metadata.get("model_type", state.spec.display_label))
+    return format_model_family_name(state.spec.family)
+
+
+def format_model_family_name(family: str) -> str:
+    if family == MODEL_FAMILY_MULTILINGUAL:
+        return "Multilingual transformer"
+    if family == MODEL_FAMILY_TRANSFORMER:
+        return "Transformer embedding"
+    return "Lexical"
+
+
+def _build_runtime_input_preview(
+    raw_text: str | None,
+    job_post: Mapping[str, str] | None,
+) -> str:
+    if job_post is not None:
+        return "\n".join(
+            str(job_post.get(field, "")).strip()
+            for field in MODEL_TEXT_FIELDS
+            if str(job_post.get(field, "")).strip()
+        )
+    return str(raw_text or "")
+
+
+def _contains_non_latin_script(text: str) -> bool:
+    return bool(
+        re.search(
+            r"[\u0400-\u052F\u0590-\u05FF\u0600-\u06FF\u0900-\u097F\u0E00-\u0E7F\u3040-\u30FF\u3400-\u9FFF\uAC00-\uD7AF]",
+            text,
+        )
+    )
+
+
+def _supports_non_latin_input(spec: DemoModelSpec) -> bool:
+    return spec.family == MODEL_FAMILY_MULTILINGUAL
+
+
+if __name__ == "__main__":
+    if len(sys.argv) >= 4 and sys.argv[1] == "--predict-transformer" and sys.argv[2] == "--artifact-dir":
+        raise SystemExit(_run_transformer_embedding_cli(sys.argv[3]))

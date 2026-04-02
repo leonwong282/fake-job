@@ -1,53 +1,104 @@
 # Fake Job Demo
 
-Local Streamlit demo for fake-job fraud scoring with a gated model path:
+Local Streamlit demo for fake-job fraud scoring with a fixed four-model compare flow:
 
-- Baseline lexical artifacts live in `model/mvp`
-- Multilingual primary artifacts are expected under `model/multilingual_primary`
-- The web app only activates the multilingual primary model after Kaggle exports that bundle
+- `model/count_lr`
+- `model/tfidf_lr`
+- `model/distilbert_lr`
+- `model/multilingual_primary`
+
+The web app runs all four models on the same posting, keeps `tfidf_lr` selected by default for the main verdict card, and shows a compare surface for `count_lr`, `tfidf_lr`, `distilbert_lr`, and `multilingual_primary` on every analysis.
 
 ## Run
 
 ```bash
 python3 -m pip install -r requirements.txt
-streamlit run app.py
+python3 -m streamlit run app.py
 ```
 
-## Current Routing
+If you want to pin transformer inference to a specific interpreter:
 
-- Baseline always available when these files exist:
-  - `model/mvp/count_vectorizer.joblib`
-  - `model/mvp/logreg_model.joblib`
-  - `model/mvp/metadata.json`
-- Multilingual primary becomes active only when these Kaggle-exported files exist:
-  - `model/multilingual_primary/classifier.joblib`
-  - `model/multilingual_primary/metadata.json`
-  - `model/multilingual_primary/cv_results.csv`
-  - `model/multilingual_primary/README.txt`
-- The app keeps baseline lexical cues visible for comparison and fallback.
+```bash
+FAKE_JOB_TRANSFORMER_PYTHON=/usr/local/bin/python3 python3 -m streamlit run app.py
+```
 
-## Demo Scope
+## Demo Contract
 
-- Input mode: paste one full posting into the combined text box
-- Active output: fraud probability and label from the current active model
-- Comparison output: multilingual primary vs lexical baseline when both are available
-- Explanation output: matched lexical term contributions from the baseline only
+- Input modes:
+  - combined full-text paste
+  - structured field entry for `title`, `company_profile`, `description`, `requirements`, `benefits`
+- Model selector:
+  - the selected model owns the primary verdict card
+  - the compare surface still renders every model run
+- Language routing:
+  - English and Latin-script input runs all four models
+  - non-Latin input keeps `multilingual_primary` active
+  - `count_lr`, `tfidf_lr`, and `distilbert_lr` are shown as skipped on non-Latin input instead of returning misleading scores
+  - low-score non-Latin results from `multilingual_primary` are shown as `Needs Review`, not `Likely Legit`
 
-## Kaggle Export Runbook
+## Supported Models
 
-1. Open `fake-job-export.ipynb` in Kaggle.
-2. Run the multilingual export section at the end of the notebook.
-3. That section compares only:
-   - `bert-base-multilingual-cased`
-   - `xlm-roberta-base`
-4. Model selection is fixed:
-   - highest mean fraud-class F1
-   - tie-break by mean ROC-AUC
-   - final tie-break prefers `bert-base-multilingual-cased`
-5. The notebook exports the winning classifier head and metadata bundle to `model/multilingual_primary/`.
-6. Download that directory from Kaggle and place it into this repo at `model/multilingual_primary/`.
+### `count_lr`
 
-The exported `metadata.json` is expected to contain:
+Expected files:
+
+- `model/count_lr/vectorizer.joblib`
+- `model/count_lr/classifier.joblib`
+- `model/count_lr/metadata.json`
+
+Behavior:
+
+- lexical model
+- English-oriented
+- shows lexical term contributions in the selected-model detail area
+
+### `tfidf_lr`
+
+Expected files:
+
+- `model/tfidf_lr/vectorizer.joblib`
+- `model/tfidf_lr/classifier.joblib`
+- `model/tfidf_lr/metadata.json`
+
+Behavior:
+
+- lexical model
+- English-oriented
+- default selected model in the UI
+- shows lexical term contributions in the selected-model detail area
+
+### `distilbert_lr`
+
+Expected files:
+
+- `model/distilbert_lr/classifier.joblib`
+- `model/distilbert_lr/metadata.json`
+
+Metadata requirements:
+
+- `encoder_type=transformer_embedding`
+- `model_name`
+- `max_len`
+- `threshold`
+
+Behavior:
+
+- transformer embedding model
+- English-oriented
+- does not show lexical term explanations
+- the selected-model detail area shows model input preview instead
+- may appear as `Unavailable` on machines where local transformer inference fails
+
+### `multilingual_primary`
+
+Expected files:
+
+- `model/multilingual_primary/classifier.joblib`
+- `model/multilingual_primary/metadata.json`
+- `model/multilingual_primary/cv_results.csv`
+- `model/multilingual_primary/README.txt`
+
+Metadata requirements:
 
 - `hf_model_name`
 - `model_type`
@@ -56,19 +107,30 @@ The exported `metadata.json` is expected to contain:
 - `threshold`
 - `selection_metric`
 - `training_source`
-- `preprocess_mode`
+- `preprocess_mode=raw_multilingual_text`
 
-The repo does not store full Hugging Face weights. The web app reads `hf_model_name` from `metadata.json`, downloads the backbone on first use, and then relies on the local Hugging Face cache.
+Behavior:
 
-## Local Runtime And Fallback
+- multilingual transformer CLS embedding model
+- accepts multilingual input
+- uses the raw joined text fields instead of the English lexical preprocessing path
+- treated as an experimental cross-lingual score in the UI
+- does not show lexical term explanations
+- the selected-model detail area shows model input preview instead
+- for non-Latin input, scores below threshold are surfaced as `Needs Review` instead of `Likely Legit`
+- for non-Latin input, the verdict card shows `Confidence: Experimental`
+- may appear as `Unavailable` on machines where the local mBERT forward pass crashes
 
-- If `model/multilingual_primary/` is missing or unreadable, the app keeps using the baseline.
-- If the multilingual classifier bundle exists but runtime loading fails, the app falls back to the baseline and shows the reason in the UI.
-- If both multilingual and baseline are available, the active prediction uses the multilingual primary model and the UI still renders baseline lexical cues as a transparency aid.
-- If baseline artifacts are missing, the app shows a baseline artifact warning instead of lexical explanations.
+## Runtime Notes
 
-## Notes
+- `glove_nn` is intentionally out of scope for the web demo.
+- The repo stores classifier heads and metadata, not full Hugging Face weights.
+- Transformer models download or read their backbones from the local Hugging Face cache on first use.
+- DistilBERT and the multilingual model run in isolated subprocesses so lexical models can still return results if a transformer path fails at runtime.
 
-- The multilingual primary model is a transformer feature extractor plus a `LogisticRegression` classifier head, not a full fine-tuned transformer.
-- Baseline preprocessing still follows the saved MVP artifact metadata.
-- On first multilingual inference run, model download time depends on your network and Hugging Face cache state.
+## Explanation Rules
+
+- If the selected model is `count_lr`, the UI shows lexical term contributions from the CountVectorizer features.
+- If the selected model is `tfidf_lr`, the UI shows lexical term contributions from TF-IDF feature weights.
+- If the selected model is `distilbert_lr` or `multilingual_primary`, the UI avoids fabricated lexical explanations and shows model input preview instead.
+- The current version does not interpret a low multilingual score on Chinese or other non-Latin input as proof that a posting is legitimate.
