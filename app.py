@@ -8,18 +8,18 @@ from pathlib import Path
 import streamlit as st
 
 from fake_job_demo import (
-    DEFAULT_SELECTED_MODEL_ID,
+    COUNT_LR_MODEL_ID,
     DEMO_MODEL_SPECS,
     FIELD_LABELS,
     MODEL_FAMILY_LEXICAL,
-    MODEL_FAMILY_MULTILINGUAL,
     MODEL_FAMILY_TRANSFORMER,
     MODEL_TEXT_FIELDS,
     MULTILINGUAL_PRIMARY_MODEL_ID,
     PredictionResult,
+    TFIDF_LR_MODEL_ID,
     TermContribution,
     get_demo_model_spec,
-    load_demo_model_states,
+    load_demo_model_state,
     run_demo_models_job_post,
     run_demo_models_raw_text,
 )
@@ -74,27 +74,15 @@ SAMPLE_POSTS = {
             "benefits": "Weekly cash wages, instant bonuses, and referral commissions.",
         },
     },
-    "zh_legit": {
-        "label": "ZH Legit",
-        "job_post": {
-            "title": "数据分析师",
-            "company_profile": "成熟的医疗数据服务公司，为医院和保险机构提供分析支持。",
-            "description": "负责运营报表、数据质量排查，并与产品和业务团队一起优化指标定义。",
-            "requirements": "具备 SQL 和 Python 分析经验，沟通清晰，能够向非技术同事汇报结果。",
-            "benefits": "五险一金，年度体检，培训补贴，混合办公。",
-        },
-    },
-    "zh_suspicious": {
-        "label": "ZH Suspicious",
-        "job_post": {
-            "title": "居家兼职录入员",
-            "company_profile": "国际金融咨询团队，快速扩张中。",
-            "description": "无需经验，手机即可上岗，日结高薪，立即联系招聘顾问开始赚钱。",
-            "requirements": "需保持在线，能使用 Telegram，每天提交简单报表。",
-            "benefits": "高额提成，快速返现，推荐奖金。",
-        },
-    },
 }
+
+UI_MODEL_SPECS = tuple(
+    spec
+    for spec in DEMO_MODEL_SPECS
+    if spec.model_id not in {TFIDF_LR_MODEL_ID, MULTILINGUAL_PRIMARY_MODEL_ID}
+)
+UI_MODEL_IDS = frozenset(spec.model_id for spec in UI_MODEL_SPECS)
+UI_DEFAULT_MODEL_ID = COUNT_LR_MODEL_ID
 
 
 @dataclass(frozen=True)
@@ -123,7 +111,9 @@ def main() -> None:
 
 def initialize_state() -> None:
     st.session_state.setdefault("input_mode", INPUT_MODE_COMBINED)
-    st.session_state.setdefault("selected_model_id", DEFAULT_SELECTED_MODEL_ID)
+    st.session_state.setdefault("selected_model_id", UI_DEFAULT_MODEL_ID)
+    if st.session_state["selected_model_id"] not in UI_MODEL_IDS:
+        st.session_state["selected_model_id"] = UI_DEFAULT_MODEL_ID
     st.session_state.setdefault("combined_text", "")
     st.session_state.setdefault("last_results", None)
     st.session_state.setdefault("last_error", "")
@@ -140,7 +130,7 @@ def reset_result_state() -> None:
 
 
 def load_runtime_state():
-    return load_demo_model_states()
+    return tuple(load_demo_model_state(spec.model_id) for spec in UI_MODEL_SPECS)
 
 
 def inject_styles() -> None:
@@ -168,7 +158,7 @@ def inject_styles() -> None:
 
         .block-container {
             max-width: 1180px;
-            padding-top: 1.8rem;
+            padding-top: 4.75rem;
             padding-bottom: 4rem;
         }
 
@@ -183,8 +173,8 @@ def inject_styles() -> None:
         }
 
         .hero-shell {
-            padding: 0 0 1.25rem 0;
-            margin-bottom: 1.25rem;
+            padding: 0.25rem 0 1rem 0;
+            margin-bottom: 1rem;
             border-bottom: 1px solid var(--line);
         }
 
@@ -198,25 +188,25 @@ def inject_styles() -> None:
         }
 
         .hero-title {
-            font-size: clamp(2.2rem, 5vw, 3.6rem);
-            line-height: 0.95;
+            font-size: clamp(2rem, 4vw, 3rem);
+            line-height: 1;
             margin: 0;
-            max-width: 11ch;
+            max-width: 12ch;
         }
 
         .hero-copy {
             color: var(--ink-soft);
-            font-size: 1rem;
-            max-width: 56rem;
-            margin-top: 0.85rem;
-            line-height: 1.65;
+            font-size: 0.96rem;
+            max-width: 44rem;
+            margin-top: 0.65rem;
+            line-height: 1.5;
         }
 
         .status-row {
             display: flex;
             flex-wrap: wrap;
             gap: 0.75rem;
-            margin-top: 1.1rem;
+            margin-top: 0.95rem;
         }
 
         .status-chip {
@@ -273,13 +263,39 @@ def inject_styles() -> None:
         }
 
         .compare-card {
-            padding: 1rem 1rem 0.95rem 1rem;
-            min-height: 16rem;
+            position: relative;
+            overflow: hidden;
+            padding: 0.95rem;
+            min-height: 11.25rem;
+            display: flex;
+            flex-direction: column;
+            gap: 0.72rem;
+            transition:
+                transform 160ms ease,
+                border-color 160ms ease,
+                box-shadow 160ms ease;
+        }
+
+        .compare-card::before {
+            content: "";
+            position: absolute;
+            inset: 0 0 auto 0;
+            height: 4px;
+            background: rgba(20, 32, 50, 0.18);
+        }
+
+        .compare-card:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 16px 34px rgba(20, 32, 50, 0.08);
         }
 
         .compare-card.selected {
             border-color: rgba(180, 35, 24, 0.45);
             box-shadow: 0 0 0 1px rgba(180, 35, 24, 0.14) inset;
+        }
+
+        .compare-card.selected::before {
+            background: linear-gradient(90deg, #b42318 0%, rgba(180, 35, 24, 0.34) 100%);
         }
 
         .compare-card.unavailable {
@@ -326,6 +342,30 @@ def inject_styles() -> None:
             color: var(--ink-soft);
         }
 
+        .compare-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(10.75rem, 1fr));
+            gap: 0.8rem;
+            margin-top: 0.72rem;
+        }
+
+        .compare-heading {
+            display: flex;
+            align-items: end;
+            justify-content: space-between;
+            gap: 1rem;
+            margin-top: 1rem;
+            padding-top: 0.75rem;
+            border-top: 1px solid var(--line);
+        }
+
+        .compare-summary {
+            color: var(--ink-soft);
+            font-size: 0.82rem;
+            line-height: 1.35;
+            text-align: right;
+        }
+
         .result-risk {
             font-size: clamp(2rem, 4.7vw, 3rem);
             line-height: 1.02;
@@ -334,25 +374,99 @@ def inject_styles() -> None:
         }
 
         .result-prob,
-        .compare-prob,
-        .compare-meta,
         .compare-reason {
             font-size: 0.95rem;
             color: var(--ink-soft);
             line-height: 1.5;
         }
 
-        .compare-name {
-            font-size: 1.2rem;
-            color: var(--ink);
-            margin-top: 0.4rem;
-            font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+        .compare-topline {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            gap: 0.65rem;
         }
 
-        .compare-status {
-            font-size: 1.05rem;
+        .compare-kicker {
+            font-size: 0.66rem;
+            letter-spacing: 0.12em;
+            white-space: nowrap;
+        }
+
+        .compare-badge {
+            border: 1px solid rgba(180, 35, 24, 0.22);
+            border-radius: 999px;
+            padding: 0.18rem 0.48rem;
+            color: var(--accent);
+            background: rgba(180, 35, 24, 0.07);
+            font-size: 0.68rem;
+            font-weight: 700;
+            white-space: nowrap;
+        }
+
+        .compare-name {
+            font-size: clamp(1.08rem, 2.2vw, 1.28rem);
             color: var(--ink);
-            margin-top: 0.45rem;
+            line-height: 1.05;
+            font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .compare-status-row,
+        .compare-meta-row {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 0.38rem;
+        }
+
+        .compare-pill,
+        .compare-meta-pill {
+            border: 1px solid rgba(20, 32, 50, 0.11);
+            border-radius: 999px;
+            padding: 0.24rem 0.5rem;
+            background: rgba(255, 255, 255, 0.52);
+            color: var(--ink-soft);
+            font-size: 0.76rem;
+            line-height: 1.1;
+        }
+
+        .compare-pill.danger {
+            border-color: rgba(180, 35, 24, 0.20);
+            background: rgba(180, 35, 24, 0.08);
+            color: var(--accent);
+        }
+
+        .compare-pill.success {
+            border-color: rgba(22, 101, 52, 0.18);
+            background: rgba(22, 101, 52, 0.08);
+            color: var(--success);
+        }
+
+        .compare-pill.warning {
+            border-color: rgba(154, 52, 18, 0.18);
+            background: rgba(154, 52, 18, 0.08);
+            color: var(--warning);
+        }
+
+        .compare-score-block {
+            margin-top: auto;
+        }
+
+        .compare-score {
+            font-family: "Iowan Old Style", "Palatino Linotype", "Book Antiqua", Georgia, serif;
+            font-size: clamp(2rem, 4.8vw, 2.75rem);
+            line-height: 0.9;
+            color: var(--ink);
+            letter-spacing: -0.04em;
+        }
+
+        .compare-score-label {
+            margin-top: 0.2rem;
+            color: var(--ink-soft);
+            font-size: 0.82rem;
+            line-height: 1.25;
         }
 
         .compare-reason {
@@ -429,6 +543,10 @@ def inject_styles() -> None:
         }
 
         @media (max-width: 900px) {
+            .block-container {
+                padding-top: 4.25rem;
+            }
+
             .meta-grid {
                 grid-template-columns: 1fr 1fr;
             }
@@ -436,9 +554,17 @@ def inject_styles() -> None:
             .hero-title {
                 max-width: 12ch;
             }
+
+            .compare-summary {
+                display: none;
+            }
         }
 
         @media (max-width: 640px) {
+            .block-container {
+                padding-top: 4rem;
+            }
+
             .meta-grid {
                 grid-template-columns: 1fr;
             }
@@ -455,29 +581,26 @@ def render_hero(model_states) -> None:
         f"""
         <section class="hero-shell">
           <div class="eyebrow">Fake Job Review Desk</div>
-          <h1 class="hero-title">Four models, one selected verdict, multilingual coverage when you need it.</h1>
+          <h1 class="hero-title">Two-model review</h1>
           <p class="hero-copy">
-            This local demo compares Count LR, TF-IDF LR, DistilBERT LR, and a restored
-            multilingual primary model on the same posting. TF-IDF stays the default selected
-            verdict for English input, while the multilingual model can keep scoring when the input
-            includes non-Latin scripts.
+            Compare two English detectors on one posting, with Count LR as the default verdict.
           </p>
           <div class="status-row">
             <div class="status-chip">
               <div class="status-label">Models</div>
-              <div class="status-value">Count LR, TF-IDF LR, DistilBERT LR, Multilingual Primary</div>
+              <div class="status-value">Count LR, DistilBERT LR</div>
             </div>
             <div class="status-chip">
               <div class="status-label">Default Verdict</div>
-              <div class="status-value">TF-IDF LR</div>
+              <div class="status-value">Count LR</div>
             </div>
             <div class="status-chip">
               <div class="status-label">Language Policy</div>
-              <div class="status-value">English models plus multilingual fallback</div>
+              <div class="status-value">English job text only</div>
             </div>
             <div class="status-chip">
               <div class="status-label">Artifacts</div>
-              <div class="status-value">{loaded_count} / {len(DEMO_MODEL_SPECS)} bundles loaded</div>
+              <div class="status-value">{loaded_count} / {len(UI_MODEL_SPECS)} bundles loaded</div>
             </div>
           </div>
         </section>
@@ -489,13 +612,13 @@ def render_hero(model_states) -> None:
 def render_input_panel(model_states) -> bool:
     st.markdown('<div class="section-title">Input Workspace</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="section-copy">Pick the model you want in the primary verdict card, then run the same posting through every available model. English-only models are skipped automatically when the input contains non-Latin scripts.</div>',
+        '<div class="section-copy">Pick the model you want in the primary verdict card, then run the same English posting through both available models.</div>',
         unsafe_allow_html=True,
     )
 
     st.radio(
         "Primary Result Model",
-        options=[spec.model_id for spec in DEMO_MODEL_SPECS],
+        options=[spec.model_id for spec in UI_MODEL_SPECS],
         format_func=lambda model_id: get_demo_model_spec(model_id).display_label,
         horizontal=True,
         key="selected_model_id",
@@ -514,7 +637,7 @@ def render_input_panel(model_states) -> bool:
         on_change=reset_result_state,
     )
 
-    sample_a, sample_b, sample_c, sample_d, sample_e = st.columns(5, gap="small")
+    sample_a, sample_b, sample_c = st.columns(3, gap="small")
     auto_predict = False
     if sample_a.button(SAMPLE_POSTS["legit"]["label"], use_container_width=True):
         apply_sample("legit")
@@ -522,13 +645,7 @@ def render_input_panel(model_states) -> bool:
     if sample_b.button(SAMPLE_POSTS["suspicious"]["label"], use_container_width=True):
         apply_sample("suspicious")
         auto_predict = True
-    if sample_c.button(SAMPLE_POSTS["zh_legit"]["label"], use_container_width=True):
-        apply_sample("zh_legit")
-        auto_predict = True
-    if sample_d.button(SAMPLE_POSTS["zh_suspicious"]["label"], use_container_width=True):
-        apply_sample("zh_suspicious")
-        auto_predict = True
-    if sample_e.button("Clear", use_container_width=True):
+    if sample_c.button("Clear", use_container_width=True):
         clear_inputs()
 
     if st.session_state["input_mode"] == INPUT_MODE_COMBINED:
@@ -549,7 +666,7 @@ def render_input_panel(model_states) -> bool:
         )
 
     st.caption(
-        "English lexical models and DistilBERT skip non-Latin input. Multilingual Primary handles multilingual text when its bundle is available."
+        "This UI compares the English Count LR and DistilBERT LR models only."
     )
     return st.button("Analyze Post", type="primary", use_container_width=True) or auto_predict
 
@@ -566,7 +683,7 @@ def render_structured_input_fields() -> None:
 def render_result_panel(model_states, should_predict: bool) -> None:
     st.markdown('<div class="section-title">Result Panel</div>', unsafe_allow_html=True)
     st.markdown(
-        '<div class="section-copy">Read the selected verdict first, then compare all four models and inspect explanations only where they are actually valid.</div>',
+        '<div class="section-copy">Read the selected verdict first, then compare both models and inspect explanations only where they are actually valid.</div>',
         unsafe_allow_html=True,
     )
 
@@ -577,21 +694,20 @@ def render_result_panel(model_states, should_predict: bool) -> None:
         st.error(st.session_state["last_error"])
         return
 
-    if not st.session_state["last_results"]:
+    results = filter_ui_results(st.session_state["last_results"])
+    if not results:
         st.markdown(
             """
             <div class="info-note">
               <strong>Demo flow</strong><br/>
-              Start with one English sample to compare all four models, then trigger one of the ZH
-              samples to show the multilingual path take over while the English-only models mark
-              themselves as skipped.
+              Start with one English sample to compare Count LR and DistilBERT LR on
+              the same posting.
             </div>
             """,
             unsafe_allow_html=True,
         )
         return
 
-    results = tuple(st.session_state["last_results"])
     result_by_id = {result.model_id: result for result in results}
     selected_result = result_by_id[st.session_state["selected_model_id"]]
     contains_non_latin_input = bool(st.session_state.get("last_contains_non_latin", False))
@@ -667,23 +783,34 @@ def render_primary_result(result, contains_non_latin_input: bool) -> None:
 
 
 def render_compare_surface(results, contains_non_latin_input: bool) -> None:
-    st.markdown('<div class="detail-block"><div class="term-title">Compare Surface</div></div>', unsafe_allow_html=True)
+    ready_count = sum(
+        1 for result in results if result.status == "ready" and result.prediction is not None
+    )
+    st.markdown(
+        f"""
+        <div class="compare-heading">
+          <div class="term-title">Compare Surface</div>
+          <div class="compare-summary">{ready_count} / {len(results)} models returned a score</div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
     selected_model_id = st.session_state["selected_model_id"]
-    cards_per_row = 2 if len(results) > 3 else len(results)
+    cards_html = "".join(
+        render_compare_card(
+            result,
+            result.model_id == selected_model_id,
+            contains_non_latin_input=contains_non_latin_input,
+        )
+        for result in results
+    )
+    st.markdown(
+        f'<div class="compare-grid">{cards_html}</div>',
+        unsafe_allow_html=True,
+    )
 
-    for start in range(0, len(results), cards_per_row):
-        row_results = results[start : start + cards_per_row]
-        columns = st.columns(cards_per_row, gap="large")
-        for column, result in zip(columns, row_results):
-            with column:
-                render_compare_card(
-                    result,
-                    result.model_id == selected_model_id,
-                    contains_non_latin_input=contains_non_latin_input,
-                )
 
-
-def render_compare_card(result, is_selected: bool, contains_non_latin_input: bool) -> None:
+def render_compare_card(result, is_selected: bool, contains_non_latin_input: bool) -> str:
     spec = get_demo_model_spec(result.model_id)
     classes = ["compare-card"]
     if is_selected:
@@ -698,36 +825,47 @@ def render_compare_card(result, is_selected: bool, contains_non_latin_input: boo
             prediction,
             contains_non_latin_input=contains_non_latin_input,
         )
-        probability_text = display_view.supporting_text
+        probability_text = f"{prediction.fraud_probability * 100:.1f}%"
+        probability_label = "fraud probability"
         verdict_text = display_view.headline_label
         status_text = "Ready"
         reason_html = ""
-        type_text = result.model_type
-        status_color = result_tone_color(display_view.status_tone)
+        type_text = format_compact_model_type(result.model_type)
+        status_tone = display_view.status_tone
     else:
-        probability_text = "No probability available"
+        probability_text = "--"
+        probability_label = "no score"
         verdict_text = "Skipped" if result.status == "skipped" else "Unavailable"
         status_text = "Skipped" if result.status == "skipped" else "Unavailable"
-        type_text = result.model_type
-        status_color = "#142032"
+        type_text = format_compact_model_type(result.model_type)
+        status_tone = "warning"
         reason_html = (
             f'<div class="compare-reason">{escape(result.error_message or "Unknown runtime failure.")}</div>'
         )
 
-    selected_tag = "Selected verdict" if is_selected else "Compare model"
-    st.markdown(
-        f"""
-        <div class="{' '.join(classes)}">
-          <div class="compare-kicker">{escape(selected_tag)}</div>
-          <div class="compare-name">{escape(spec.display_label)}</div>
-          <div class="compare-status" style="color:{status_color};">{escape(status_text)} · {escape(verdict_text)}</div>
-          <div class="compare-prob">{escape(probability_text)}</div>
-          <div class="compare-meta">Family: {escape(format_model_family(spec.family))}</div>
-          <div class="compare-meta">Type: {escape(type_text)}</div>
-          {reason_html}
-        </div>
-        """,
-        unsafe_allow_html=True,
+    selected_tag = "Selected" if is_selected else "Compare"
+    selected_badge = '<div class="compare-badge">Primary</div>' if is_selected else ""
+    return (
+        f'<div class="{" ".join(classes)}">'
+        '<div class="compare-topline">'
+        f'<div class="compare-kicker">{escape(selected_tag)}</div>'
+        f"{selected_badge}"
+        "</div>"
+        f'<div class="compare-name" title="{escape(spec.display_label)}">{escape(spec.display_label)}</div>'
+        '<div class="compare-status-row">'
+        f'<div class="compare-pill">{escape(status_text)}</div>'
+        f'<div class="compare-pill {escape(status_tone)}">{escape(verdict_text)}</div>'
+        "</div>"
+        '<div class="compare-score-block">'
+        f'<div class="compare-score">{escape(probability_text)}</div>'
+        f'<div class="compare-score-label">{escape(probability_label)}</div>'
+        "</div>"
+        '<div class="compare-meta-row">'
+        f'<div class="compare-meta-pill">{escape(format_model_family(spec.family))}</div>'
+        f'<div class="compare-meta-pill" title="{escape(result.model_type)}">{escape(type_text)}</div>'
+        "</div>"
+        f"{reason_html}"
+        "</div>"
     )
 
 
@@ -753,16 +891,12 @@ def render_selected_explanation(result) -> None:
     )
 
     if result.status != "ready" or result.prediction is None:
-        message = (
-            "This selected model was skipped because the current input contains non-Latin text and the model is English-only."
-            if result.status == "skipped"
-            else "This selected model did not produce a score for the current run."
-        )
+        message = "This selected model did not produce a score for the current run."
         st.markdown(
             f"""
             <div class="info-note">
-              {escape(message)} Keep the selector on it if you want to demonstrate routing behavior,
-              or switch to one of the ready models in the compare surface for explanation detail.
+              {escape(message)} Switch to one of the ready models in the compare surface for
+              explanation detail.
             </div>
             """,
             unsafe_allow_html=True,
@@ -789,7 +923,7 @@ def render_selected_explanation(result) -> None:
             st.code(prediction.processed_text[:4000] or "(empty)", language="text")
         return
 
-    if spec.family in {MODEL_FAMILY_TRANSFORMER, MODEL_FAMILY_MULTILINGUAL}:
+    if spec.family == MODEL_FAMILY_TRANSFORMER:
         st.markdown(
             """
             <div class="info-note">
@@ -829,18 +963,17 @@ def render_model_notes(model_states) -> None:
 
     with note_a:
         st.subheader("Registry")
-        st.write("The local web demo supports four models.")
-        for spec in DEMO_MODEL_SPECS:
-            suffix = "default selected" if spec.model_id == DEFAULT_SELECTED_MODEL_ID else "compare model"
+        st.write("The local web demo supports two English models.")
+        for spec in UI_MODEL_SPECS:
+            suffix = "default selected" if spec.model_id == UI_DEFAULT_MODEL_ID else "compare model"
             st.write(f"{spec.display_label}: {format_model_family(spec.family)} ({suffix})")
 
     with note_b:
         st.subheader("Runtime Contract")
-        st.write("Count LR, TF-IDF LR, and DistilBERT LR are English-first models.")
-        st.write("Multilingual Primary accepts multilingual input and remains active for non-Latin text.")
-        st.write("English-only models are shown as skipped instead of returning misleading scores on non-Latin input.")
-        st.write("Low-score non-Latin results from Multilingual Primary are surfaced as Needs Review instead of Legit.")
-        st.write("If the local mBERT backbone crashes at runtime, Multilingual Primary is shown as unavailable with the subprocess reason.")
+        st.write("Count LR and DistilBERT LR are English-only demo models.")
+        st.write("Chinese and other non-Latin input is blocked before prediction.")
+        st.write("The selected model owns the primary verdict card.")
+        st.write("The compare surface still renders every supported UI model run.")
 
     with note_c:
         st.subheader("Artifacts")
@@ -862,10 +995,8 @@ def run_prediction(model_states) -> None:
             return
         contains_non_latin = contains_unsupported_script(combined_text)
         st.session_state["last_contains_non_latin"] = contains_non_latin
-        if contains_non_latin and not has_multilingual_bundle(model_states):
-            st.session_state["last_error"] = (
-                "Non-Latin input requires the multilingual_primary bundle, but it is not available."
-            )
+        if contains_non_latin:
+            st.session_state["last_error"] = "This UI supports English job text only. Please remove Chinese or other non-Latin text."
             return
         st.session_state["last_results"] = run_demo_models_raw_text(combined_text, model_states)
         return
@@ -877,10 +1008,8 @@ def run_prediction(model_states) -> None:
         return
     contains_non_latin = contains_unsupported_script(combined_text)
     st.session_state["last_contains_non_latin"] = contains_non_latin
-    if contains_non_latin and not has_multilingual_bundle(model_states):
-        st.session_state["last_error"] = (
-            "Non-Latin input requires the multilingual_primary bundle, but it is not available."
-        )
+    if contains_non_latin:
+        st.session_state["last_error"] = "This UI supports English job text only. Please remove Chinese or other non-Latin text."
         return
     st.session_state["last_results"] = run_demo_models_job_post(job_post, model_states)
 
@@ -936,11 +1065,17 @@ def format_input_mode(mode: str) -> str:
 
 
 def format_model_family(family: str) -> str:
-    if family == MODEL_FAMILY_MULTILINGUAL:
-        return "Multilingual transformer"
     if family == MODEL_FAMILY_TRANSFORMER:
-        return "Transformer embedding"
+        return "Transformer"
     return "Lexical"
+
+
+def format_compact_model_type(model_type: str) -> str:
+    compact_labels = {
+        "CountVectorizer + LogisticRegression": "Count + LR",
+        "DistilBERT Embedding + LogisticRegression": "DistilBERT + LR",
+    }
+    return compact_labels.get(model_type, model_type)
 
 
 def build_result_display_view(
@@ -950,20 +1085,6 @@ def build_result_display_view(
     contains_non_latin_input: bool,
 ) -> ResultDisplayView:
     probability_text = f"{prediction.fraud_probability * 100:.1f}% fraud probability"
-    if result.model_id == MULTILINGUAL_PRIMARY_MODEL_ID and contains_non_latin_input:
-        headline_label = (
-            "Suspicious"
-            if prediction.fraud_probability >= prediction.threshold
-            else "Needs Review"
-        )
-        status_tone = "danger" if headline_label == "Suspicious" else "warning"
-        return ResultDisplayView(
-            headline_label=headline_label,
-            supporting_text=f"Experimental multilingual score: {probability_text}.",
-            confidence_label="Experimental",
-            status_tone=status_tone,
-        )
-
     return ResultDisplayView(
         headline_label=prediction.risk_label,
         supporting_text=f"{probability_text} from {result.display_label}.",
@@ -987,11 +1108,10 @@ def _pick_reference_prediction(results) -> PredictionResult | None:
     return None
 
 
-def has_multilingual_bundle(model_states) -> bool:
-    for state in model_states:
-        if state.spec.model_id == MULTILINGUAL_PRIMARY_MODEL_ID and state.is_loaded:
-            return True
-    return False
+def filter_ui_results(results) -> tuple:
+    if not results:
+        return ()
+    return tuple(result for result in results if result.model_id in UI_MODEL_IDS)
 
 
 if __name__ == "__main__":
