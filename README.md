@@ -1,4 +1,4 @@
-# Fake Job Demo
+# Fake Job
 
 Local Streamlit demo for fake-job fraud scoring with a fixed four-model compare flow:
 
