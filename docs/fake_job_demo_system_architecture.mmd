@@ -1,0 +1,48 @@
+flowchart LR
+    user["用户/研究者"] --> browser["浏览器"]
+    browser <--> ui["Streamlit Web UI<br/>app.py"]
+
+    subgraph L1["交互层"]
+        ui --> input["输入工作区<br/>全文粘贴 / 结构化字段"]
+        ui --> result["结果面板<br/>主判定卡片 / 模型对比 / 解释详情"]
+    end
+
+    subgraph L2["应用服务层"]
+        input --> validation["输入校验与语言策略<br/>空输入检查 / 非拉丁文本拦截"]
+        validation --> state["运行状态加载<br/>load_runtime_state<br/>load_demo_model_state"]
+        state --> orchestrator["推理编排器<br/>run_demo_models_raw_text<br/>run_demo_models_job_post"]
+    end
+
+    subgraph L3["模型推理层"]
+        orchestrator --> prep["文本构造与预处理<br/>字段拼接 / 小写化 / 去链接HTML标点<br/>正则分词 / 英文停用词过滤"]
+        prep --> lexical["词袋逻辑回归分支<br/>CountVectorizer + LogisticRegression<br/>predict_proba + 词项贡献解释"]
+        prep --> transformer["Transformer 嵌入分支<br/>隔离子进程<br/>DistilBERT tokenizer/backbone<br/>CLS embedding + LogisticRegression"]
+        lexical --> post["结果后处理<br/>阈值判定 / 风险标签 / 置信度分层"]
+        transformer --> post
+    end
+
+    subgraph L4["工件与数据层"]
+        data["训练/评估数据<br/>data/fake_job_postings*.csv<br/>fake-job-export.ipynb"]
+        count_artifacts["model/count_lr<br/>vectorizer.joblib<br/>classifier.joblib<br/>metadata.json"]
+        distilbert_artifacts["model/distilbert_lr<br/>classifier.joblib / metadata.json<br/>Hugging Face 本地缓存或下载权重"]
+        extension["扩展实验工件<br/>model/tfidf_lr<br/>model/multilingual_primary"]
+    end
+
+    count_artifacts -.-> lexical
+    distilbert_artifacts -.-> transformer
+    data -.-> count_artifacts
+    data -.-> distilbert_artifacts
+    post --> result
+    result --> browser
+
+    classDef ui fill:#eaf4ff,stroke:#336699,color:#172033;
+    classDef service fill:#fff8e6,stroke:#a66b00,color:#172033;
+    classDef model fill:#eef8ee,stroke:#27734d,color:#172033;
+    classDef artifact fill:#f5f1ff,stroke:#6b56a3,color:#172033;
+    classDef note fill:#f3f4f6,stroke:#8a94a6,color:#4b5563,stroke-dasharray:5 4;
+
+    class user,browser,ui,input,result ui;
+    class validation,state,orchestrator service;
+    class prep,lexical,transformer,post model;
+    class data,count_artifacts,distilbert_artifacts artifact;
+    class extension note;

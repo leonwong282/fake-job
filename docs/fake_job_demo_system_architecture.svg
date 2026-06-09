@@ -1,0 +1,266 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="960" viewBox="0 0 1500 960" role="img" aria-labelledby="title desc">
+  <title id="title">fake_job_demo 系统总体架构图</title>
+  <desc id="desc">fake_job_demo 本地 Streamlit 演示系统的总体架构，包含交互层、应用服务层、模型推理层、工件与数据层。</desc>
+  <defs>
+    <marker id="arrow" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
+      <path d="M 0 0 L 12 6 L 0 12 z" fill="#354052"/>
+    </marker>
+    <marker id="arrow-soft" viewBox="0 0 12 12" refX="10" refY="6" markerWidth="10" markerHeight="10" orient="auto-start-reverse">
+      <path d="M 0 0 L 12 6 L 0 12 z" fill="#7a8495"/>
+    </marker>
+    <filter id="soft-shadow" x="-8%" y="-8%" width="116%" height="124%">
+      <feDropShadow dx="0" dy="7" stdDeviation="7" flood-color="#172033" flood-opacity="0.10"/>
+    </filter>
+    <style>
+      text {
+        font-family: "Noto Sans CJK SC", "Microsoft YaHei", "PingFang SC", "Source Han Sans SC", Arial, sans-serif;
+        fill: #172033;
+      }
+      .page {
+        fill: #ffffff;
+      }
+      .title {
+        font-size: 30px;
+        font-weight: 700;
+      }
+      .subtitle {
+        font-size: 15px;
+        fill: #586579;
+      }
+      .lane {
+        stroke: #d8e0ea;
+        stroke-width: 1.4;
+        rx: 18;
+      }
+      .lane-ui {
+        fill: #f4f9ff;
+      }
+      .lane-service {
+        fill: #fffaf0;
+      }
+      .lane-model {
+        fill: #f3fbf5;
+      }
+      .lane-artifact {
+        fill: #f8f6ff;
+      }
+      .lane-label {
+        font-size: 19px;
+        font-weight: 700;
+        fill: #2b3648;
+      }
+      .lane-note {
+        font-size: 12px;
+        fill: #697589;
+      }
+      .box {
+        fill: #ffffff;
+        stroke: #c3cedd;
+        stroke-width: 1.5;
+        rx: 14;
+        filter: url(#soft-shadow);
+      }
+      .box-ui {
+        stroke: #4d8ec8;
+      }
+      .box-service {
+        stroke: #bd7a00;
+      }
+      .box-model {
+        stroke: #2f855a;
+      }
+      .box-artifact {
+        stroke: #7257b5;
+      }
+      .box-muted {
+        fill: #fafafa;
+        stroke: #9aa4b2;
+        stroke-dasharray: 7 5;
+        filter: none;
+      }
+      .box-title {
+        font-size: 17px;
+        font-weight: 700;
+      }
+      .box-body {
+        font-size: 13px;
+        fill: #4f5d72;
+      }
+      .chip {
+        fill: #eef4fb;
+        stroke: #c7d6e6;
+        stroke-width: 1;
+        rx: 10;
+      }
+      .chip-text {
+        font-size: 12px;
+        fill: #42526a;
+        font-weight: 600;
+      }
+      .arrow {
+        fill: none;
+        stroke: #354052;
+        stroke-width: 2.2;
+        marker-end: url(#arrow);
+      }
+      .arrow-soft {
+        fill: none;
+        stroke: #7a8495;
+        stroke-width: 1.8;
+        stroke-dasharray: 7 6;
+        marker-end: url(#arrow-soft);
+      }
+      .label-small {
+        font-size: 12px;
+        fill: #697589;
+      }
+      .footer {
+        font-size: 12px;
+        fill: #647084;
+      }
+    </style>
+  </defs>
+
+  <rect class="page" x="0" y="0" width="1500" height="960"/>
+
+  <text class="title" x="50" y="45">fake_job_demo 系统总体架构图</text>
+  <text class="subtitle" x="50" y="72">本地 Streamlit 演示系统：英文岗位文本输入、双模型欺诈风险评分、结果对比与解释展示</text>
+
+  <rect class="lane lane-ui" x="40" y="94" width="1420" height="158"/>
+  <text class="lane-label" x="64" y="124">交互层</text>
+  <text class="lane-note" x="64" y="145">浏览器与 Streamlit 页面</text>
+
+  <rect class="lane lane-service" x="40" y="278" width="1420" height="180"/>
+  <text class="lane-label" x="64" y="309">应用服务层</text>
+  <text class="lane-note" x="64" y="330">输入校验、状态加载、推理调度</text>
+
+  <rect class="lane lane-model" x="40" y="482" width="1420" height="246"/>
+  <text class="lane-label" x="64" y="513">模型推理层</text>
+  <text class="lane-note" x="64" y="534">文本处理、特征提取、模型预测、结果后处理</text>
+
+  <rect class="lane lane-artifact" x="40" y="754" width="1420" height="158"/>
+  <text class="lane-label" x="64" y="785">工件与数据层</text>
+  <text class="lane-note" x="64" y="806">本地模型文件、元数据、训练数据和外部权重缓存</text>
+
+  <g>
+    <rect class="box box-ui" x="100" y="146" width="190" height="72"/>
+    <text class="box-title" x="132" y="176">用户/研究者</text>
+    <text class="box-body" x="128" y="198">提交岗位文本并查看结果</text>
+  </g>
+
+  <g>
+    <rect class="box box-ui" x="360" y="120" width="340" height="112"/>
+    <text class="box-title" x="388" y="150">Streamlit Web UI</text>
+    <text class="box-body" x="388" y="173">app.py</text>
+    <text class="box-body" x="388" y="195">全文粘贴 / 结构化字段输入</text>
+    <text class="box-body" x="388" y="216">主模型选择、样例填充、清空</text>
+  </g>
+
+  <g>
+    <rect class="box box-ui" x="1120" y="120" width="300" height="112"/>
+    <text class="box-title" x="1148" y="150">结果面板</text>
+    <text class="box-body" x="1148" y="174">主判定卡片</text>
+    <text class="box-body" x="1148" y="196">模型对比卡片</text>
+    <text class="box-body" x="1148" y="218">输入覆盖与解释详情</text>
+  </g>
+
+  <g>
+    <rect class="box box-service" x="160" y="324" width="300" height="98"/>
+    <text class="box-title" x="188" y="354">输入校验与语言策略</text>
+    <text class="box-body" x="188" y="378">空输入检查</text>
+    <text class="box-body" x="188" y="399">非拉丁文本拦截（English-only UI）</text>
+  </g>
+
+  <g>
+    <rect class="box box-service" x="530" y="324" width="300" height="98"/>
+    <text class="box-title" x="558" y="354">运行状态加载</text>
+    <text class="box-body" x="558" y="378">load_runtime_state()</text>
+    <text class="box-body" x="558" y="399">load_demo_model_state()</text>
+  </g>
+
+  <g>
+    <rect class="box box-service" x="900" y="306" width="360" height="134"/>
+    <text class="box-title" x="928" y="337">推理编排器</text>
+    <text class="box-body" x="928" y="361">run_demo_models_raw_text()</text>
+    <text class="box-body" x="928" y="382">run_demo_models_job_post()</text>
+    <text class="box-body" x="928" y="403">按模型状态分派预测，保留失败原因</text>
+    <text class="box-body" x="928" y="424">当前 UI：Count LR 与 DistilBERT LR</text>
+  </g>
+
+  <g>
+    <rect class="box box-model" x="120" y="556" width="320" height="136"/>
+    <text class="box-title" x="148" y="586">文本构造与预处理</text>
+    <text class="box-body" x="148" y="610">字段：title / profile / description</text>
+    <text class="box-body" x="148" y="631">requirements / benefits</text>
+    <text class="box-body" x="148" y="652">小写化、去链接HTML标点、去数字词</text>
+    <text class="box-body" x="148" y="673">正则分词、英文停用词过滤</text>
+  </g>
+
+  <g>
+    <rect class="box box-model" x="520" y="520" width="330" height="160"/>
+    <text class="box-title" x="548" y="550">词袋逻辑回归分支</text>
+    <text class="box-body" x="548" y="574">CountVectorizer 编码</text>
+    <text class="box-body" x="548" y="595">LogisticRegression predict_proba</text>
+    <text class="box-body" x="548" y="616">阈值：metadata.threshold = 0.5</text>
+    <text class="box-body" x="548" y="637">输出：欺诈概率与词项贡献解释</text>
+    <rect class="chip" x="548" y="650" width="116" height="22"/>
+    <text class="chip-text" x="565" y="666">Count LR</text>
+  </g>
+
+  <g>
+    <rect class="box box-model" x="930" y="520" width="420" height="160"/>
+    <text class="box-title" x="958" y="550">Transformer 嵌入分支</text>
+    <text class="box-body" x="958" y="574">隔离子进程运行，避免主 UI 被异常中断</text>
+    <text class="box-body" x="958" y="595">DistilBERT tokenizer/backbone 提取 CLS 向量</text>
+    <text class="box-body" x="958" y="616">LogisticRegression predict_proba</text>
+    <text class="box-body" x="958" y="637">输出：欺诈概率与模型输入预览</text>
+    <rect class="chip" x="958" y="650" width="132" height="22"/>
+    <text class="chip-text" x="973" y="666">DistilBERT LR</text>
+  </g>
+
+  <g>
+    <rect class="box box-model" x="520" y="700" width="830" height="54"/>
+    <text class="box-title" x="548" y="724">结果后处理</text>
+    <text class="box-body" x="548" y="746">阈值判定 → Suspicious / Likely Legit，置信度分层；高亮选中模型并渲染对比结果</text>
+  </g>
+
+  <g>
+    <rect class="box box-artifact" x="100" y="822" width="300" height="66"/>
+    <text class="box-title" x="128" y="850">训练/评估数据</text>
+    <text class="box-body" x="128" y="872">data/fake_job_postings*.csv</text>
+    <text class="box-body" x="128" y="889">fake-job-export.ipynb 离线导出</text>
+  </g>
+
+  <g>
+    <rect class="box box-artifact" x="520" y="804" width="330" height="88"/>
+    <text class="box-title" x="548" y="832">model/count_lr</text>
+    <text class="box-body" x="548" y="855">vectorizer.joblib</text>
+    <text class="box-body" x="548" y="876">classifier.joblib，metadata.json</text>
+  </g>
+
+  <g>
+    <rect class="box box-artifact" x="930" y="804" width="420" height="88"/>
+    <text class="box-title" x="958" y="832">model/distilbert_lr + HF 权重</text>
+    <text class="box-body" x="958" y="855">classifier.joblib，metadata.json</text>
+    <text class="box-body" x="958" y="876">distilbert-base-uncased 本地缓存或首次下载</text>
+  </g>
+
+  <path class="arrow" d="M 290 182 L 348 182"/>
+  <path class="arrow" d="M 700 176 L 1110 176"/>
+  <path class="arrow" d="M 530 232 C 530 270 310 286 310 314"/>
+  <path class="arrow" d="M 460 373 L 520 373"/>
+  <path class="arrow" d="M 830 373 L 890 373"/>
+  <path class="arrow" d="M 1080 440 C 1080 475 280 490 280 546"/>
+  <path class="arrow" d="M 440 624 L 510 604"/>
+  <path class="arrow" d="M 440 624 C 590 624 735 600 920 600"/>
+  <path class="arrow" d="M 685 680 L 685 690"/>
+  <path class="arrow" d="M 1140 680 L 1140 690"/>
+  <path class="arrow" d="M 1200 700 C 1330 650 1360 330 1270 242"/>
+
+  <path class="arrow-soft" d="M 250 822 C 360 770 520 750 650 690"/>
+  <text class="label-small" x="310" y="786">离线训练生成模型工件</text>
+  <path class="arrow-soft" d="M 685 804 L 685 690"/>
+  <path class="arrow-soft" d="M 1140 804 L 1140 690"/>
+
+  <text class="footer" x="50" y="940">注：该图描述当前本地运行路径；实时推理读取本地模型工件，不直接访问训练 CSV；tfidf_lr 与 multilingual_primary 为仓库保留的扩展实验工件。</text>
+</svg>

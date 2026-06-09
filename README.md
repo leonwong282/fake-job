@@ -11,15 +11,20 @@ The web app runs all four models on the same posting, keeps `tfidf_lr` selected 
 
 ## Run
 
+This project is intended to run from a local virtual environment. With `uv`,
+you can avoid installing packages into the Homebrew-managed system Python:
+
 ```bash
-python3 -m pip install -r requirements.txt
-python3 -m streamlit run app.py
+uv venv .venv
+source .venv/bin/activate
+uv pip install -r requirements.txt
+STREAMLIT_BROWSER_GATHER_USAGE_STATS=false uv run streamlit run app.py --server.headless true
 ```
 
 If you want to pin transformer inference to a specific interpreter:
 
 ```bash
-FAKE_JOB_TRANSFORMER_PYTHON=/usr/local/bin/python3 python3 -m streamlit run app.py
+STREAMLIT_BROWSER_GATHER_USAGE_STATS=false FAKE_JOB_TRANSFORMER_PYTHON=/usr/local/bin/python3 uv run streamlit run app.py --server.headless true
 ```
 
 ## Demo Contract
